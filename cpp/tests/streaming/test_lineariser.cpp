@@ -2,7 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
  * SPDX-License-Identifier: Apache-2.0
  */
-#if 0
+
+#include <cerrno>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -103,4 +104,3 @@ TEST_F(StreamingLineariser, ManyProducers) {
         EXPECT_EQ(outputs[i].release<std::size_t>(), i);
     }
 }
-#endif
