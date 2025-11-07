@@ -4,7 +4,6 @@
 from libcpp.memory cimport shared_ptr
 from libcpp.utility cimport move
 
-from functools import partial
 from rapidsmpf.streaming.core.context cimport Context, cpp_Context
 from rapidsmpf.streaming.core.message cimport Message, cpp_Message
 from rapidsmpf.streaming.core.utilities cimport cython_invoke_python_function
@@ -134,15 +133,10 @@ cdef extern from * nogil:
         std::shared_ptr<rapidsmpf::streaming::Channel> channel,
         rapidsmpf::streaming::Message &msg_output,
         void (*py_invoker)(void*),
-        void *py_function_msg,
-        void *py_function_empty
+        void *py_function
     ) {
         msg_output = co_await channel->receive();
-        if (msg_output.empty()) {
-            py_invoker(py_function_empty);
-        } else {
-            py_invoker(py_function_msg);
-        }
+        py_invoker(py_function);
     }
     }  // namespace
 
@@ -151,17 +145,12 @@ cdef extern from * nogil:
         std::shared_ptr<rapidsmpf::streaming::Channel> channel,
         rapidsmpf::streaming::Message &msg_output,
         void (*py_invoker)(void*),
-        void *py_function_msg,
-        void *py_function_empty
+        void *py_function
     ) {
         RAPIDSMPF_EXPECTS(
             ctx->executor()->spawn(
                 _channel_recv_task(
-                    std::move(channel),
-                    msg_output,
-                    py_invoker,
-                    py_function_msg,
-                    py_function_empty
+                    std::move(channel), msg_output, py_invoker, py_function
                 )
             ),
             "could not spawn task on thread pool"
@@ -173,10 +162,8 @@ cdef extern from * nogil:
         shared_ptr[cpp_Channel] channel,
         cpp_Message &msg_output,
         void (*py_invoker)(void*),
-        void *py_function_msg,
-        void *py_function_empty
+        void *py_function
     )
-
 
 cdef class Channel:
     """
@@ -213,14 +200,16 @@ cdef class Channel:
         """
         loop = asyncio.get_running_loop()
         ret = loop.create_future()
-        callback = partial(loop.call_soon_threadsafe, partial(ret.set_result, None))
+
+        def set_result():
+            loop.call_soon_threadsafe(ret.set_result, None)
 
         with nogil:
             cpp_channel_drain(
                 ctx._handle,
                 self._handle,
                 cython_invoke_python_function,
-                <void *>callback
+                <void *>set_result
             )
         await ret
 
@@ -241,14 +230,16 @@ cdef class Channel:
         """
         loop = asyncio.get_running_loop()
         ret = loop.create_future()
-        callback = partial(loop.call_soon_threadsafe, partial(ret.set_result, None))
+
+        def set_result():
+            loop.call_soon_threadsafe(ret.set_result, None)
 
         with nogil:
             cpp_channel_shutdown(
                 ctx._handle,
                 self._handle,
                 cython_invoke_python_function,
-                <void *>callback
+                <void *>set_result
             )
         await ret
 
@@ -269,7 +260,9 @@ cdef class Channel:
         """
         loop = asyncio.get_running_loop()
         ret = loop.create_future()
-        callback = partial(loop.call_soon_threadsafe, partial(ret.set_result, None))
+
+        def set_result():
+            loop.call_soon_threadsafe(ret.set_result, None)
 
         with nogil:
             cpp_channel_send(
@@ -277,7 +270,7 @@ cdef class Channel:
                 self._handle,
                 move(msg._handle),
                 cython_invoke_python_function,
-                <void *>callback
+                <void *>set_result
             )
         await ret
 
@@ -298,23 +291,25 @@ cdef class Channel:
         loop = asyncio.get_running_loop()
         ret = loop.create_future()
 
-        cdef cpp_Message c_msg
-        cdef Message msg = Message.from_handle(move(c_msg))
+        cdef cpp_Message msg_output
 
-        callback_msg = partial(
-            loop.call_soon_threadsafe, partial(ret.set_result, msg)
-        )
-        callback_empty = partial(
-            loop.call_soon_threadsafe, partial(ret.set_result, None)
-        )
+        def f():
+            if msg_output.empty():
+                return ret.set_result(None)
+
+            ret.set_result(
+                Message.from_handle(move(msg_output))
+            )
+
+        def set_result():
+            loop.call_soon_threadsafe(f)
 
         with nogil:
             cpp_channel_recv(
                 ctx._handle,
                 self._handle,
-                msg._handle,
+                msg_output,
                 cython_invoke_python_function,
-                <void *>callback_msg,
-                <void *>callback_empty
+                <void *>set_result
             )
         return await ret

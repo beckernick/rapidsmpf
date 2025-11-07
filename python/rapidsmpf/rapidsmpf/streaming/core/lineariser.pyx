@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 
-from functools import partial
 from cython.operator cimport dereference as deref
 from libcpp.memory cimport make_shared, shared_ptr
 
@@ -99,13 +98,15 @@ cdef class Lineariser:
         """
         loop = asyncio.get_running_loop()
         ret = loop.create_future()
-        callback = partial(loop.call_soon_threadsafe, partial(ret.set_result, None))
+
+        def set_result():
+            loop.call_soon_threadsafe(ret.set_result, None)
 
         with nogil:
             cpp_lineariser_drain(
                 self._ctx._handle,
                 self._handle,
                 cython_invoke_python_function,
-                <void *>callback
+                <void *>set_result
             )
         await ret
